@@ -54,7 +54,20 @@ SKIF_GamePadInputHelper::GetXInputState (void)
   auto pGamepad = m_xisGamepad;
 
   if (dwActivePid == GetCurrentProcessId () && pGamepad != nullptr)
+  {
+    WINDOWINFO winfo        = {                 };
+               winfo.cbSize = sizeof (WINDOWINFO);
+
+    // This method for testing if the app is active is simpler than the crap above,
+    //   consider replacing all of that junk with simply this.
+    if ((! GetWindowInfo (SKIF_ImGui_hWnd, &winfo)) ||
+                                           (winfo.dwWindowStatus & WS_ACTIVECAPTION) == 0)
+    {
+      return {};
+    }
+
     return *pGamepad;
+  }
 
   return {};
 }
@@ -161,7 +174,7 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
       }
     }
 
-    m_bWantUpdate.store(false);
+    m_bWantUpdate.store (false);
 
     static HWND    hWndLastForeground = 0;
     static DWORD  dwActivePid         = 0x0;
@@ -172,8 +185,15 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
 
     if (dwActivePid == GetProcessId (GetCurrentProcess ()))
     {
-      // Trigger the main thread to refresh its focus, which will also trickle down to us
-      SendMessage (m_hWindowHandle, WM_SKIF_REFRESHFOCUS, 0x0, 0x0);
+      WINDOWINFO winfo        = {                 };
+                 winfo.cbSize = sizeof (WINDOWINFO);
+
+      if (GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
+                                          (winfo.dwWindowStatus & WS_ACTIVECAPTION) != 0)
+      {
+        // Trigger the main thread to refresh its focus, which will also trickle down to us
+        SendMessage (m_hWindowHandle, WM_SKIF_REFRESHFOCUS, 0x0, 0x0);
+      }
     }
   }
 
@@ -200,6 +220,17 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
   static HWND    hWndLastForeground = 0;
   static DWORD  dwActivePid         = 0x0;
 
+  bool windowIsActive = false;
+
+  WINDOWINFO winfo        = {                 };
+             winfo.cbSize = sizeof (WINDOWINFO);
+
+  if (GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
+                                      (winfo.dwWindowStatus & WS_ACTIVECAPTION) != 0)
+  {
+    windowIsActive = true;
+  }
+
   // GetWindowThreadProcessId has surprisingly high overhead, if the foreground window
   //   has not changed, then we can avoid calling it.
   HWND                                   hWndForeground =    GetForegroundWindow ();
@@ -210,7 +241,12 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
   static DWORD dwTimeOfActivation = 0;
 
   if (dwLastActivePid != dwActivePid && dwActivePid == GetCurrentProcessId ())
-    dwTimeOfActivation = SKIF_Util_timeGetTime ();
+  {
+    if (windowIsActive)
+    {
+      dwTimeOfActivation = SKIF_Util_timeGetTime ();
+    }
+  }
 
   for ( auto idx : XUSER_INDEXES )
   {
@@ -218,7 +254,7 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
     gamepad_state_s            local        = history [idx];
     XINPUT_STATE               xinput_state = { };
 
-    if (m_bGamepads [idx].load())
+    if (m_bGamepads [idx].load ())
     {
       DWORD dwResult = SKIF_XInputGetState (idx, &xinput_state);
 
@@ -227,7 +263,8 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
 
       else if (dwResult == ERROR_SUCCESS && GetCurrentProcessId () == dwActivePid &&
                                                    dwLastActivePid == dwActivePid &&
-                                                   dwTimeOfActivation < SKIF_Util_timeGetTime () - 500UL)
+                                                   dwTimeOfActivation < SKIF_Util_timeGetTime () - 500UL &&
+                                                   windowIsActive)
       {
         // If button state is different, this controller is active...
         if ( xinput_state.dwPacketNumber != local.last_state.dwPacketNumber )
@@ -297,7 +334,8 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
 
   if (dwActivePid != GetCurrentProcessId () ||
          !IsWindowVisible (SKIF_ImGui_hWnd) ||
-      dwTimeOfActivation > SKIF_Util_timeGetTime () - 500UL)
+      dwTimeOfActivation > SKIF_Util_timeGetTime () - 500UL ||
+      !windowIsActive)
   {
     // Neutralize input because SKIF is not in the foreground
     newest.state = XSTATE_EMPTY;
