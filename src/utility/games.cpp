@@ -14,6 +14,7 @@
 #include <SKIF.h>
 #include <utility/utility.h>
 #include "stores/Steam/apps_ignore.h"
+#include <utility/injection.h>
 #include <utility/fsutil.h>
 #include <stores/GOG/gog_library.h>
 #include <stores/epic/epic_library.h>
@@ -310,7 +311,7 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
 {
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
-  
+
   static DWORD lastGameRefresh = 0;
   static std::wstring exeSteam = L"steam.exe";
 
@@ -321,6 +322,7 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
   DWORD        current_time = SKIF_Util_timeGetTime ( );
   static DWORD last_checked = 0;
 
+  bool any_running      = false;
   bool focused          = SKIF_ImGui_IsFocused ();
   int  focus_multiplier = focused ? 1 : 10;
 
@@ -336,6 +338,9 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
     //   This avoids issues with the UI thread reading the state while we are in the middle of refreshing.
     for (auto& app : *apps)
     {
+      if (app.second._status.running)
+        any_running = true;
+
       app.second._staging.running_pid = app.second._status.running_pid;
       app.second._staging.running     = app.second._status.running;
 
@@ -544,6 +549,7 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
             {
               PLOG_DEBUG << "Game process for app ID " << monitored_app.id << " from platform ID " << monitored_app.store_id << " has ended!";
               app.second._staging.running = 0;
+              app.second._status.running  = 0;
 
               monitored_app.id              =  0;
               monitored_app.store_id        = -1;
@@ -559,6 +565,8 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
                 hWorkerThread = INVALID_HANDLE_VALUE;
                 monitored_app.hWorkerThread.store(INVALID_HANDLE_VALUE);
               }
+
+              PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0x0, 0x0);
             }
           }
           
@@ -579,10 +587,32 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
     }
   }
 
+  // Push staging changes to actual state
   for (auto& app : *apps)
   {
+    if (app.second._staging.running || app.second._status.running)
+      any_running = true;
+
+    if (app.second._status.dwTimeDelayChecks > current_time && (! forced))
+        continue;
+
     app.second._status.running     = app.second._staging.running;
     app.second._status.running_pid = app.second._staging.running_pid;
+  }
+
+  // If any game is running, and SKIF is not focused, then trigger a repaint every 2 seconds
+  //   to ensure the running state is updated without any user input.
+  if (any_running)
+  {
+    WINDOWINFO                       wndInfo = { .cbSize = sizeof (WINDOWINFO) };
+    GetWindowInfo (SKIF_ImGui_hWnd, &wndInfo);
+
+    if ((wndInfo.dwStyle & WS_ACTIVECAPTION) == 0)
+    {
+      Sleep (2000UL);
+
+      PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0x0, 0x0);
+    }
   }
 }
 
