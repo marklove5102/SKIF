@@ -331,17 +331,23 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
 
     bool new_steamRunning = false;
 
+    // Stage the current state, it will be pushed to the actual state at the end of the function.
+    //
+    //   This avoids issues with the UI thread reading the state while we are in the middle of refreshing.
     for (auto& app : *apps)
     {
+      app.second._staging.running_pid = app.second._status.running_pid;
+      app.second._staging.running     = app.second._status.running;
+
       if (app.second._status.dwTimeDelayChecks > current_time && (! forced))
         continue;
 
-      app.second._status.running_pid = 0;
+      app.second._staging.running_pid = 0;
 
       if (app.second.store == app_record_s::Store::Steam && (steamRunning || ! steamFallback))
         continue;
 
-      app.second._status.running     = false;
+      app.second._staging.running = false;
     }
 
     PROCESSENTRY32W none = { },
@@ -416,8 +422,8 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
             // TODO: Investigate if this is even really needed any longer? // Aemony, 2023-12-31
             if (app.second.store == app_record_s::Store::Xbox && StrStrIW (app.second.launch_configs[0].getExecutableFileName ( ).c_str(), pe32.szExeFile))
             {
-              app.second._status.running     = true;
-              app.second._status.running_pid = pe32.th32ProcessID;
+              app.second._staging.running     = true;
+              app.second._staging.running_pid = pe32.th32ProcessID;
               break;
             }
 
@@ -427,13 +433,13 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
               {
                 if (_wcsnicmp (app.second.launch_configs[0].getExecutableFullPath ( ).c_str(), szExePath, szExePathLen) == 0)
                 {
-                  app.second._status.running_pid = pe32.th32ProcessID;
+                  app.second._staging.running_pid = pe32.th32ProcessID;
 
                   // Only set the running state if the primary registry monitoring is unavailable
                   if (! steamFallback)
                     continue;
 
-                  app.second._status.running     = true;
+                  app.second._staging.running     = true;
                   break;
                 }
               }
@@ -441,8 +447,8 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
               // Epic, GOG and SKIF Custom should be straight forward
               else if (_wcsnicmp (app.second.launch_configs[0].getExecutableFullPath ( ).c_str(), szExePath, szExePathLen) == 0) // full path
               {
-                app.second._status.running     = true;
-                app.second._status.running_pid = pe32.th32ProcessID;
+                app.second._staging.running     = true;
+                app.second._staging.running_pid = pe32.th32ProcessID;
                 break;
 
                 // One can also perform a partial match with the below OR clause in the IF statement, however from testing
@@ -503,13 +509,13 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
         if (monitored_app.id       ==      app.second.id &&
             monitored_app.store_id == (int)app.second.store)
         {
-          app.second._status.running = 1;
+          app.second._staging.running = 1;
 
           // Failed start -- let's clean up the wrong data
           if (iReturnCode > 0)
           {
             PLOG_ERROR << "Worker thread for launching app ID " << monitored_app.id << " from platform ID " << monitored_app.store_id << " failed!";
-            app.second._status.running     =  0;
+            app.second._staging.running =  0;
 
             monitored_app.id               =  0;
             monitored_app.store_id         = -1;
@@ -537,7 +543,7 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
             if (WAIT_OBJECT_0 == WaitForSingleObject (hProcess, 0))
             {
               PLOG_DEBUG << "Game process for app ID " << monitored_app.id << " from platform ID " << monitored_app.store_id << " has ended!";
-              app.second._status.running = 0;
+              app.second._staging.running = 0;
 
               monitored_app.id              =  0;
               monitored_app.store_id        = -1;
@@ -571,6 +577,12 @@ SKIF_GamingCollection::RefreshRunningApps (std::vector <std::pair <std::string, 
         }
       }
     }
+  }
+
+  for (auto& app : *apps)
+  {
+    app.second._status.running     = app.second._staging.running;
+    app.second._status.running_pid = app.second._staging.running_pid;
   }
 }
 

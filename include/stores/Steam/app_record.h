@@ -102,7 +102,7 @@ struct app_record_s {
     DWORD                    dwTimeDelayChecks = 0; // Used to prevent the status from changing for X number of milliseconds.
     DWORD                    dwTimeLastChecked = 0;
     void invalidate (void) { dwTimeLastChecked = 0; }
-  } _status;
+  } _status, _staging;
 
   struct names_s {
     std::string all_upper;
