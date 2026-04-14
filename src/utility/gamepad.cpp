@@ -4,6 +4,8 @@
 #include <SKIF.h>
 #include <Dbt.h>
 
+bool SKIF_ImGui_IsFocused (void);
+
 SKIF_GamePadInputHelper::SKIF_GamePadInputHelper (void)
 {
   // Initialize the condition variable that the gamepad input thread will sleep on
@@ -93,7 +95,7 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
 
   // Calling XInputGetState() every frame on disconnected gamepads is unfortunately too slow.
   // Instead we refresh gamepad availability by calling XInputGetCapabilities() _only_ after receiving WM_DEVICECHANGE.
-  if (m_bWantUpdate.load())
+  if (m_bWantUpdate.load ())
   {
     bool hasGamepad = false;
 
@@ -131,9 +133,9 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
       }
     }
 
-    PLOG_ERROR_IF(hModXInput == nullptr)                 << "Failed to load XInput library?!";
-    PLOG_ERROR_IF(SKIF_XInputGetCapabilities == nullptr) << "Failed to get SKIF_XInputGetCapabilities address?!";
-    PLOG_ERROR_IF(SKIF_XInputGetState == nullptr)        << "Failed to get SKIF_XInputGetState address?!";
+    PLOG_ERROR_IF (hModXInput                 == nullptr) << "Failed to load XInput library?!";
+    PLOG_ERROR_IF (SKIF_XInputGetCapabilities == nullptr) << "Failed to get SKIF_XInputGetCapabilities address?!";
+    PLOG_ERROR_IF (SKIF_XInputGetState        == nullptr) << "Failed to get SKIF_XInputGetState address?!";
 
     if (SKIF_XInputGetCapabilities != nullptr)
     {
@@ -226,10 +228,13 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
   WINDOWINFO winfo        = {                 };
              winfo.cbSize = sizeof (WINDOWINFO);
 
-  if (GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
-                                      (winfo.dwWindowStatus & WS_ACTIVECAPTION) != 0)
+  if (SKIF_ImGui_IsFocused ())
   {
-    windowIsActive = true;
+    if (GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
+                                        (winfo.dwWindowStatus & WS_ACTIVECAPTION) != 0)
+    {
+      windowIsActive = true;
+    }
   }
 
   // GetWindowThreadProcessId has surprisingly high overhead, if the foreground window

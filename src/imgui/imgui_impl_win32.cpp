@@ -130,6 +130,7 @@ static void ImGui_ImplWin32_UpdateMonitors();
 void    SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
 void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd);
 bool    SKIF_ImGui_ImplWin32_IsFocused        (void);
+void    SKIF_ImGui_ImplWin32_SetFocused       (bool focused);
 
 struct ImGui_ImplWin32_Data
 {
@@ -943,12 +944,14 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARA
         io.AddMouseButtonEvent(button, false);
         return 0;
     }
+
     case WM_MOUSEWHEEL:
         io.AddMouseWheelEvent(0.0f, (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA);
         return 0;
     case WM_MOUSEHWHEEL:
         io.AddMouseWheelEvent(-(float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA, 0.0f);
         return 0;
+
     case WM_KEYDOWN:
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
@@ -974,31 +977,32 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARA
 
             // Submit key event
             if (key != ImGuiKey_None)
-                ImGui_ImplWin32_AddKeyEvent(key, is_key_down, vk, scancode);
+                ImGui_ImplWin32_AddKeyEvent (key, is_key_down, vk, scancode);
 
             // Submit individual left/right modifier events
             if (vk == VK_SHIFT)
             {
-                // Important: Shift keys tend to get stuck when pressed together, missing key-up events are corrected in ImGui_ImplWin32_ProcessKeyEventsWorkarounds()
-                if (IsVkDown(VK_LSHIFT) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_LeftShift, is_key_down, VK_LSHIFT, scancode); }
-                if (IsVkDown(VK_RSHIFT) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_RightShift, is_key_down, VK_RSHIFT, scancode); }
+              // Important: Shift keys tend to get stuck when pressed together, missing key-up events are corrected in ImGui_ImplWin32_ProcessKeyEventsWorkarounds()
+              if (IsVkDown (VK_LSHIFT)   == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_LeftShift,  is_key_down,   VK_LSHIFT, scancode); }
+              if (IsVkDown (VK_RSHIFT)   == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_RightShift, is_key_down,   VK_RSHIFT, scancode); }
             }
             else if (vk == VK_CONTROL)
             {
-                if (IsVkDown(VK_LCONTROL) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_LeftCtrl, is_key_down, VK_LCONTROL, scancode); }
-                if (IsVkDown(VK_RCONTROL) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_RightCtrl, is_key_down, VK_RCONTROL, scancode); }
+              if (IsVkDown (VK_LCONTROL) == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_LeftCtrl,   is_key_down, VK_LCONTROL, scancode); }
+              if (IsVkDown (VK_RCONTROL) == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_RightCtrl,  is_key_down, VK_RCONTROL, scancode); }
             }
             else if (vk == VK_MENU)
             {
-                if (IsVkDown(VK_LMENU) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_LeftAlt, is_key_down, VK_LMENU, scancode); }
-                if (IsVkDown(VK_RMENU) == is_key_down) { ImGui_ImplWin32_AddKeyEvent(ImGuiKey_RightAlt, is_key_down, VK_RMENU, scancode); }
+              if (IsVkDown (VK_LMENU)    == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_LeftAlt,    is_key_down,    VK_LMENU, scancode); }
+              if (IsVkDown (VK_RMENU)    == is_key_down) { ImGui_ImplWin32_AddKeyEvent (ImGuiKey_RightAlt,   is_key_down,    VK_RMENU, scancode); }
             }
         }
         return 0;
     }
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
-        io.AddFocusEvent(msg == WM_SETFOCUS);
+        SKIF_ImGui_ImplWin32_SetFocused (msg == WM_SETFOCUS);
+        io.AddFocusEvent                (msg == WM_SETFOCUS);
         return 0;
     case WM_INPUTLANGCHANGE:
         ImGui_ImplWin32_UpdateKeyboardCodePage();
@@ -2338,14 +2342,20 @@ SKIF_ImGui_ImplWin32_UpdateDWMBorders (void)
   }
 }
 
+static bool g_Focused = false; // Always assume we don't have focus on launch
+
 // Peripheral Functions
+void SKIF_ImGui_ImplWin32_SetFocused (bool focused)
+{
+  g_Focused = focused;
+}
+
 bool SKIF_ImGui_ImplWin32_IsFocused (void)
 {
+#if 0
   // AppFocusLost can not be relied upon as it is not persistent across frames (always set to false; app has focus by ImGui::EndFrame)
   //ImGuiContext& g = *GImGui;
   //return ! g.IO.AppFocusLost;
-
-  static bool g_Focused = false; // Always assume we don't have focus on launch
 
   // Semi-new workaround introduced in 2024-01-28
 
@@ -2376,6 +2386,7 @@ bool SKIF_ImGui_ImplWin32_IsFocused (void)
       g_Focused = (dwWindowOwnerPid == dwPidOfMe);
     }
   }
+#endif
 
   return g_Focused;
 }
