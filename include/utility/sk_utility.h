@@ -250,6 +250,12 @@ public:
     //   such as -2 = Current Thread, -1 = Current Process
   }
 
+  bool isValid (void) const noexcept
+  {
+    return
+      (reinterpret_cast <intptr_t> (m_h) > 0);
+  }
+
   const HANDLE& get (void) const noexcept { return m_h; };
 };
 

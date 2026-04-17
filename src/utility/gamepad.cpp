@@ -3,8 +3,150 @@
 #include <utility/registry.h>
 #include <SKIF.h>
 #include <Dbt.h>
+#include <utility>
+
+#include <unordered_map>
 
 bool SKIF_ImGui_IsFocused (void);
+
+bool SKIF_ImGui_ProcessGamepadInput = false;
+
+void
+SKIF_ImGui_UpdateGamepadProcessingEligibility (void) 
+{
+  RECT                             rcSKIF = { };
+  GetWindowRect (SKIF_ImGui_hWnd, &rcSKIF);
+
+  static HWND  hWndLastForeground = { };
+  static DWORD dwActivePid        = { };
+
+  WINDOWINFO winfo        = {                 };
+             winfo.cbSize = sizeof (WINDOWINFO);
+
+  bool windowIsActive =
+    ( SKIF_ImGui_IsFocused (                ) &&
+      GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
+                                 0 != (winfo.dwWindowStatus & WS_ACTIVECAPTION) );
+
+  if (windowIsActive)
+  {
+    SKIF_ImGui_ProcessGamepadInput = true;
+
+    //
+    // Check for another window covering the game window, if the user cannot
+    //   see the game then allowing background gamepad input would be very dangerous...
+    //
+    bool process_input = true;
+
+    auto GetWindowsAbove =
+    [&]( HWND targetHwnd, std::vector <HWND>& windowsAbove ) noexcept
+    {
+      if (targetHwnd == nullptr)
+        return;
+
+      static auto constexpr          _MaxExpectedWindows = 32;
+      if (windowsAbove.capacity () < _MaxExpectedWindows)
+          windowsAbove.reserve      (_MaxExpectedWindows);
+
+      windowsAbove.clear ();
+
+      HWND hwnd =
+        GetTopWindow (nullptr);
+
+      while ( hwnd != nullptr &&
+              hwnd != targetHwnd )
+      {
+        if (     IsWindowVisible (hwnd))
+          windowsAbove.push_back (hwnd);
+
+        hwnd = GetNextWindow
+          (hwnd, GW_HWNDNEXT);
+      }
+    };
+
+    auto IsWindowOverlapping =
+    [&]( HWND hWndContainer, const RECT& rectContained, RECT& rcIntersect ) noexcept
+    {
+      RECT                                 rectContainer = {};
+      if (! GetWindowRect (hWndContainer, &rectContainer))
+        return false;
+
+      SetRectEmpty (&rcIntersect);
+
+      return
+        IntersectRect (&rcIntersect, &rectContainer, &rectContained) != FALSE;
+    };
+
+    static std::unordered_map <HWND, BOOL> injected_pid_cache;
+    static std::vector        <HWND>       windows_above = {};
+    GetWindowsAbove (SKIF_ImGui_hWnd,      windows_above    );
+
+    if (process_input)
+    {
+      bool any_injected = false;
+
+      for (const auto& window : windows_above)
+      {
+        if (injected_pid_cache.find (window) ==
+            injected_pid_cache.end  (      ))
+        {
+          DWORD                              dwPid = 0x0;
+          GetWindowThreadProcessId (window, &dwPid);
+
+          wchar_t     wszInjectionSignature [33] = {};
+          _snwprintf (wszInjectionSignature, 32, LR"(Local\SK_InjectedPid_%d)", dwPid);
+
+          SK_AutoHandle hInjectionSignature (
+            OpenEventW (EVENT_ALL_ACCESS, FALSE, wszInjectionSignature)
+          );
+
+          injected_pid_cache [window] =
+            hInjectionSignature.isValid ();
+        }
+
+        if (! any_injected)
+              any_injected = injected_pid_cache [window];
+      }
+
+      if (any_injected)
+      {
+        HMONITOR hMonSKIF =
+          MonitorFromWindow (SKIF_ImGui_hWnd, MONITOR_DEFAULTTONEAREST);
+
+        MONITORINFO minfo        = {                  };
+                    minfo.cbSize = sizeof (MONITORINFO);
+
+        if (GetMonitorInfoW (hMonSKIF, &minfo))
+        {
+          RECT rcVisibleWindow = {};
+          RECT rcIntersection  = {};
+
+          // Use the work area to avoid the region occupied by the taskbar when testing occlusion
+          rcVisibleWindow.left   = std::max (minfo.rcWork.left,   rcSKIF.left);
+          rcVisibleWindow.right  = std::min (minfo.rcWork.right,  rcSKIF.right);
+          rcVisibleWindow.top    = std::max (minfo.rcWork.top,    rcSKIF.top);
+          rcVisibleWindow.bottom = std::min (minfo.rcWork.bottom, rcSKIF.bottom);
+
+          for (const auto& window : windows_above)
+          {
+            if (IsWindowOverlapping (window, rcVisibleWindow, rcIntersection) &&
+                 injected_pid_cache [window])
+            {
+              process_input = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    SKIF_ImGui_ProcessGamepadInput = process_input;
+    return;
+  }
+
+  SKIF_ImGui_ProcessGamepadInput = false;
+}
+
 
 SKIF_GamePadInputHelper::SKIF_GamePadInputHelper (void)
 {
@@ -69,7 +211,12 @@ SKIF_GamePadInputHelper::GetXInputState (void)
       return {};
     }
 
-    return *pGamepad;
+    SKIF_ImGui_UpdateGamepadProcessingEligibility ();
+
+    if (SKIF_ImGui_ProcessGamepadInput)
+      return *pGamepad;
+
+    return {};
   }
 
   return {};
@@ -194,8 +341,13 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
       if (GetWindowInfo (SKIF_ImGui_hWnd, &winfo) &&
                                           (winfo.dwWindowStatus & WS_ACTIVECAPTION) != 0)
       {
-        // Trigger the main thread to refresh its focus, which will also trickle down to us
-        SendMessage (m_hWindowHandle, WM_SKIF_REFRESHFOCUS, 0x0, 0x0);
+        SKIF_ImGui_UpdateGamepadProcessingEligibility ();
+
+        if (SKIF_ImGui_ProcessGamepadInput)
+        {
+          // Trigger the main thread to refresh its focus, which will also trickle down to us
+          SendMessage (m_hWindowHandle, WM_SKIF_REFRESHFOCUS, 0x0, 0x0);
+        }
       }
     }
   }
@@ -250,7 +402,10 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
   {
     if (windowIsActive)
     {
-      dwTimeOfActivation = SKIF_Util_timeGetTime ();
+      SKIF_ImGui_UpdateGamepadProcessingEligibility ();
+
+      if (SKIF_ImGui_ProcessGamepadInput)
+        dwTimeOfActivation = SKIF_Util_timeGetTime ();
     }
   }
 
@@ -267,7 +422,8 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
       if (dwResult == ERROR_DEVICE_NOT_CONNECTED)
         m_bGamepads    [idx].store (false);
 
-      else if (dwResult == ERROR_SUCCESS && GetCurrentProcessId () == dwActivePid &&
+      else if (dwResult == ERROR_SUCCESS && SKIF_ImGui_ProcessGamepadInput &&
+                                            GetCurrentProcessId () == dwActivePid &&
                                                    dwLastActivePid == dwActivePid &&
                                                    dwTimeOfActivation < SKIF_Util_timeGetTime () - 500UL &&
                                                    windowIsActive)
@@ -340,7 +496,8 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
 
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
 
-  if (dwActivePid != GetCurrentProcessId () ||
+  if (!SKIF_ImGui_ProcessGamepadInput ||
+      dwActivePid != GetCurrentProcessId () ||
          !IsWindowVisible (SKIF_ImGui_hWnd) ||
       dwTimeOfActivation > SKIF_Util_timeGetTime () - 500UL ||
       !windowIsActive ||
