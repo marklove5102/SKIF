@@ -2315,6 +2315,33 @@ DrawGameContextMenu (app_record_s* pApp)
       if (monitored_app.id == pApp->id && monitored_app.store_id == (int)pApp->store)
         mon_app = &monitored_app;
 
+    auto ResumeGame = [](DWORD pid)
+    {
+      if (pid == 0)
+        return;
+
+      EnumWindows ([](HWND hWnd, LPARAM lParam) -> BOOL
+      {
+        DWORD                            dwPID = 0;
+        GetWindowThreadProcessId (hWnd, &dwPID);
+
+        if (dwPID == lParam)
+        {
+          if (GetWindowLongPtrW (hWnd, GWL_EXSTYLE) & WS_EX_APPWINDOW)
+          {
+            if (IsIconic (hWnd))
+              ShowWindow (hWnd, SW_RESTORE);
+
+            SetForegroundWindow (hWnd);
+
+            return FALSE;
+          }
+        }
+
+        return TRUE;
+      }, pid);
+    };
+
     if (mon_app != nullptr)
     {
       HANDLE hProcess = mon_app->hProcess.load();
@@ -2325,6 +2352,11 @@ DrawGameContextMenu (app_record_s* pApp)
 
       if (bInvalid)
         ImGui::BeginDisabled ( );
+
+      if (SKIF_ImGui_MenuItemEx2 ("Switch to game", ICON_FA_WINDOW_RESTORE))
+      {
+        ResumeGame (GetProcessId (hProcess));
+      }
       
       if (SKIF_ImGui_MenuItemEx2 ("Terminate game", ICON_FA_POWER_OFF))
       {
@@ -2339,7 +2371,12 @@ DrawGameContextMenu (app_record_s* pApp)
     else if (pApp->_status.running_pid != 0)
     {
       ImGui::Separator ( );
-      
+
+      if (SKIF_ImGui_MenuItemEx2 ("Switch to game", ICON_FA_WINDOW_RESTORE))
+      {
+        ResumeGame (pApp->_status.running_pid);
+      }
+
       if (SKIF_ImGui_MenuItemEx2 ("Terminate game", ICON_FA_POWER_OFF))
       {
         static_proc.pid    = pApp->_status.running_pid;
